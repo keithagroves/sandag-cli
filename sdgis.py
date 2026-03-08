@@ -526,7 +526,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.0", prog_name="sdgis")
+@click.version_option("1.0.1", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
