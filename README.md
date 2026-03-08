@@ -137,6 +137,16 @@ sandag search transportation --json-output | \
 sandag query-all Bikeways -f geojson | ogr2ogr -f "GPKG" bikeways.gpkg /vsistdin/
 ```
 
+## About the Data Warehouse
+
+SanGIS and SANDAG have partnered to provide the San Diego region with a single authoritative source of GIS data through the **San Diego Regional Data Warehouse**. It contains hundreds of layers across 18 categories, collected from multiple sources including the City of San Diego, the County of San Diego, the State of California, and the federal government — all free for public use.
+
+Datasets cover everything from addresses to zoning: roads/freeways, property and city boundaries, census areas, community planning areas, lakes, streams, business zones, and much more. Data is available as hosted feature services (for interactive viewing and metadata review) and as downloads in FileGDB, Shapefile, CSV, GeoJSON, and JSON formats.
+
+> **Note:** Per California Assembly Bill AB1785, SanGIS no longer publishes parcel owner name and address information in publicly accessible online locations. For parcel owner data or technical issues, contact [webmaster@sangis.org](mailto:webmaster@sangis.org).
+
+Data is provided for convenience with no warranty as to accuracy. Users should review the [SanGIS Legal Notice](https://www.sangis.org/legal-notices) and [SANDAG Privacy Policy](https://www.sandag.org/privacy-policy) prior to use.
+
 ## Data Source
 
 All data comes from the **San Diego Regional Data Warehouse** operated by SANDAG (San Diego Association of Governments) and SanGIS.
