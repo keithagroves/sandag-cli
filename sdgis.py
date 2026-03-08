@@ -39,10 +39,22 @@ DOWNLOAD_BASE = "https://geo.sandag.org/server/rest/directories/downloads"
 
 CATEGORIES = [
     "Agriculture", "Business", "Census", "Community", "District",
-    "Ecology & Parks", "Elevation", "Fire", "Health & Public Safety",
+    "Ecology & Parks", "Elevation", "Fire", "Health and Public Safety",
     "Hydrology & Geology", "Jurisdiction", "Landbase", "Land Use",
     "Miscellaneous", "Place", "Transportation", "Utilities", "Zoning",
 ]
+
+# Keyword overrides for categories whose portal taxonomy terms don't appear
+# in dataset tags/descriptions. Each entry is a list of OR-matched phrases.
+CATEGORY_KEYWORDS = {
+    "ecology & parks":       ["ecology", "park", "open space", "trail", "preserve", "mscp", "wildlife"],
+    "health and public safety": ["health", "hospital", "clinic", "ambulance", "naloxone",
+                                "evacuation", "public safety", "healthcare", "pharmacy"],
+    "hydrology & geology":   ["flood", "floodplain", "nhd", "fault", "watershed",
+                               "geology", "isopluvial", "flowline", "waterbody", "soils"],
+    "landbase":              ["parcel", "address", "cadastral", "property", "assessor",
+                               "lot", "apn", "situs"],
+}
 
 EXPORT_FORMATS = {
     "geojson": ".geojson",
@@ -95,8 +107,10 @@ def service_url(dataset_name):
     return f"{BASE_URL}/{dataset_name}/FeatureServer"
 
 
+RDW_LIST_URL = f"{BASE_URL}/RDW_List/FeatureServer/0/query"
+
 def discover_datasets(session, force=False):
-    """Discover all hosted feature services via ArcGIS Portal REST API."""
+    """Discover datasets from the RDW_List authoritative catalog."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     if not force and CACHE_FILE.exists():
@@ -106,92 +120,99 @@ def discover_datasets(session, force=False):
                 return json.load(f)
 
     datasets = []
-    start = 1
-    num = 100
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold blue]Discovering datasets..."),
         console=err_console,
     ) as progress:
-        task = progress.add_task("Fetching", total=None)
-        while True:
-            params = {
-                "q": 'type:"Feature Service" AND owner:SanGIS',
-                "start": start,
-                "num": num,
+        progress.add_task("Fetching", total=None)
+        try:
+            r = session.get(RDW_LIST_URL, params={
+                "where": "1=1",
+                "outFields": "dataset_name,category1,category2,tags,details",
+                "orderByFields": "dataset_name ASC",
+                "resultRecordCount": 1000,
                 "f": "json",
-            }
-            try:
-                r = session.get(
-                    f"{PORTAL_URL}/sharing/rest/search",
-                    params=params,
-                    timeout=30,
-                )
-                r.raise_for_status()
-                data = r.json()
-            except Exception:
-                # Fallback: try without owner filter
-                params["q"] = 'type:"Feature Service"'
-                try:
-                    r = session.get(
-                        f"{PORTAL_URL}/sharing/rest/search",
-                        params=params,
-                        timeout=30,
-                    )
-                    r.raise_for_status()
-                    data = r.json()
-                except Exception as e:
-                    err_console.print(f"[red]Could not discover datasets: {e}")
-                    err_console.print("[yellow]Using built-in dataset list instead.")
-                    return get_builtin_datasets()
+            }, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            if "error" in data:
+                raise ValueError(data["error"].get("message", "API error"))
 
-            results = data.get("results", [])
-            if not results:
-                break
-
-            for item in results:
-                url = item.get("url", "")
-                name_match = re.search(r"/Hosted/([^/]+)/", url)
-                if name_match:
-                    ds_name = name_match.group(1)
-                else:
-                    ds_name = item.get("name", item.get("title", "")).replace(" ", "_")
-
+            for item in data.get("features", []):
+                a = item.get("attributes", {})
+                name = a.get("dataset_name", "")
+                if not name:
+                    continue
+                cats = [c for c in [a.get("category1"), a.get("category2")] if c]
+                tags = [t.strip() for t in (a.get("tags") or "").split(",") if t.strip()]
                 datasets.append({
-                    "name": ds_name,
-                    "title": item.get("title", ds_name),
-                    "description": (item.get("snippet") or item.get("description") or "")[:200],
-                    "tags": item.get("tags", []),
-                    "id": item.get("id", ""),
-                    "url": url,
-                    "modified": item.get("modified", 0),
+                    "name": name,
+                    "title": name,
+                    "description": (a.get("details") or "")[:200],
+                    "tags": tags,
+                    "categories": cats,
+                    "url": f"{BASE_URL}/{name}/FeatureServer",
                 })
 
-            next_start = data.get("nextStart", -1)
-            if next_start == -1 or next_start <= start:
-                break
-            start = next_start
-            progress.update(task, description=f"[bold blue]Found {len(datasets)} datasets...")
+        except Exception as e:
+            err_console.print(f"[red]Could not reach RDW_List: {e}")
+            err_console.print("[yellow]Falling back to portal search...")
+            return _discover_via_portal(session)
 
-    # Deduplicate by name
-    seen = set()
-    unique = []
-    for ds in datasets:
+    if not datasets:
+        err_console.print("[yellow]RDW_List returned no datasets. Using portal search.")
+        return _discover_via_portal(session)
+
+    with open(CACHE_FILE, "w") as f:
+        json.dump(datasets, f, indent=2)
+
+    return datasets
+
+
+def _discover_via_portal(session):
+    """Fallback: discover datasets via ArcGIS Portal search."""
+    datasets = []
+    start = 1
+    for _ in range(20):  # max 2000 results
+        params = {"q": 'type:"Feature Service" AND owner:SanGIS', "start": start, "num": 100, "f": "json"}
+        try:
+            r = session.get(f"{PORTAL_URL}/sharing/rest/search", params=params, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            err_console.print(f"[red]Portal search failed: {e}")
+            return get_builtin_datasets()
+
+        for item in data.get("results", []):
+            url = item.get("url", "")
+            m = re.search(r"/Hosted/([^/]+)/", url)
+            name = m.group(1) if m else item.get("name", "").replace(" ", "_")
+            datasets.append({
+                "name": name,
+                "title": item.get("title", name),
+                "description": (item.get("snippet") or "")[:200],
+                "tags": item.get("tags", []),
+                "categories": [],
+                "url": url,
+            })
+
+        next_start = data.get("nextStart", -1)
+        if next_start == -1 or next_start <= start:
+            break
+        start = next_start
+
+    seen, unique = set(), []
+    for ds in sorted(datasets, key=lambda x: x["name"].lower()):
         if ds["name"] not in seen:
             seen.add(ds["name"])
             unique.append(ds)
 
-    unique.sort(key=lambda x: x["name"].lower())
-
-    if not unique:
-        err_console.print("[yellow]Portal returned no datasets. Using built-in dataset list.")
-        return get_builtin_datasets()
-
-    with open(CACHE_FILE, "w") as f:
-        json.dump(unique, f, indent=2)
-
-    return unique
+    if unique:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(unique, f, indent=2)
+    return unique or get_builtin_datasets()
 
 
 def get_builtin_datasets():
@@ -530,7 +551,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.4", prog_name="sdgis")
+@click.version_option("1.0.5", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -578,15 +599,30 @@ def list_datasets(ctx, refresh, fmt, as_json, category):
 
     if category:
         cat_lower = category.lower()
-        datasets = [
-            ds for ds in datasets
-            if any(cat_lower in t.lower() for t in ds.get("tags", []))
-            or cat_lower in ds.get("name", "").lower()
-            or cat_lower in ds.get("description", "").lower()
-        ]
+        # Use authoritative category fields from RDW_List if available,
+        # otherwise fall back to keyword matching against tags/description
+        has_category_data = any(ds.get("categories") for ds in datasets)
+        if has_category_data:
+            datasets = [
+                ds for ds in datasets
+                if any(cat_lower == c.lower() for c in ds.get("categories", []))
+            ]
+        else:
+            phrases = CATEGORY_KEYWORDS.get(
+                cat_lower,
+                [p.strip() for p in re.split(r"\s*&\s*", cat_lower) if p.strip()]
+            )
+            def _matches(ds):
+                text = " ".join([
+                    ds.get("name", ""),
+                    ds.get("description", ""),
+                    " ".join(ds.get("tags", [])),
+                ]).lower()
+                return any(phrase in text for phrase in phrases)
+            datasets = [ds for ds in datasets if _matches(ds)]
         if not datasets:
-            err_console.print(f"[yellow]No datasets found matching category '{category}'")
-            err_console.print("[dim]  Run [bold]sdgis categories[/] to see category names")
+            err_console.print(f"[yellow]No datasets found in category '{category}'")
+            err_console.print("[dim]  Run [bold]sdgis categories[/] to see valid category names")
             return
 
     if as_json:
