@@ -122,12 +122,7 @@ def discover_datasets(session, force=False):
 
     datasets = []
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]Discovering datasets..."),
-        console=err_console,
-    ) as progress:
-        progress.add_task("Fetching", total=None)
+    with err_console.status("Discovering datasets..."):
         try:
             r = session.get(RDW_LIST_URL, params={
                 "where": "1=1",
@@ -578,7 +573,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.8", prog_name="sdgis")
+@click.version_option("1.0.9", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -1059,13 +1054,7 @@ def query_all(ctx, dataset, where, fields, geometry, srid, layer, fmt, limit):
     offset = 0
     all_features = []
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        console=err_console,
-    ) as progress:
-        task = progress.add_task(f"Fetching {dataset}...", total=None)
-
+    with err_console.status(f"Fetching {dataset}...") as status:
         while True:
             remaining = None
             if limit:
@@ -1087,7 +1076,7 @@ def query_all(ctx, dataset, where, fields, geometry, srid, layer, fmt, limit):
 
             all_features.extend(features)
             offset += len(features)
-            progress.update(task, description=f"[bold blue]Fetched {len(all_features)} features...")
+            status.update(f"Fetching {dataset}... ({len(all_features)} features)")
 
             if not data.get("exceededTransferLimit", False):
                 break
