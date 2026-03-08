@@ -1,14 +1,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="sandag-cli",
+    name="sdgis-cli",
     version="1.0.0",
     description="CLI for the San Diego Regional Data Warehouse (SANDAG/SanGIS)",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="Your Name",
     license="MIT",
-    py_modules=["sandag"],
+    py_modules=["sdgis"],
     install_requires=[
         "click>=8.0",
         "requests>=2.28",
@@ -30,7 +30,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "sandag=sandag:cli",
+            "sdgis=sdgis:cli",
         ],
     },
     python_requires=">=3.8",

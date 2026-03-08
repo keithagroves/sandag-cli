@@ -1,4 +1,4 @@
-# sandag — San Diego Regional Data Warehouse CLI
+# sdgis — San Diego Regional Data Warehouse CLI
 
 A command-line tool for exploring, querying, and downloading **360+ GIS datasets** from the [San Diego Regional Data Warehouse](https://geo.sandag.org) maintained by SANDAG and SanGIS.
 
@@ -16,10 +16,16 @@ The SANDAG data warehouse is one of the most comprehensive public GIS repositori
 ## Installation
 
 ```bash
-pip install -e .
+pipx install sdgis-cli
+```
+
+Or with pip:
+
+```bash
+pip install sdgis-cli
 
 # For semantic search (recommended):
-pip install sentence-transformers numpy
+pip install sdgis-cli[embed]
 ```
 
 ## Setup (first time)
@@ -27,39 +33,39 @@ pip install sentence-transformers numpy
 Build the local search index. Downloads the dataset catalog and computes embeddings (~22MB model, takes ~30s):
 
 ```bash
-sandag index
+sdgis index
 ```
 
 ## Quick Start
 
 ```bash
 # Semantic search — find relevant datasets without knowing exact names
-sandag search "bike infrastructure"
-sandag search "water and flooding"
-sandag search "affordable housing near transit"
+sdgis search "bike infrastructure"
+sdgis search "water and flooding"
+sdgis search "affordable housing near transit"
 
 # Understand a dataset before querying it (great for agents)
-sandag describe Bikeways
+sdgis describe Bikeways
 
 # Count features (with optional filter)
-sandag count Bikeways
-sandag count ABC_Licenses --where "LICENSE_TYPE='21'"
+sdgis count Bikeways
+sdgis count ABC_Licenses --where "LICENSE_TYPE='21'"
 
 # Query features
-sandag query Bikeways --limit 5
-sandag query Bikeways --where "RD_NAME='Coast Blvd'" --fields "RD_NAME,CLASS"
-sandag query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 50
+sdgis query Bikeways --limit 5
+sdgis query Bikeways --where "RD_NAME='Coast Blvd'" --fields "RD_NAME,CLASS"
+sdgis query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 50
 
 # Output as JSON or CSV
-sandag query Bikeways --limit 100 -f json
-sandag query Bikeways --limit 100 -f csv > bikeways.csv
-sandag query Bikeways --limit 100 -f geojson > bikeways.geojson
+sdgis query Bikeways --limit 100 -f json
+sdgis query Bikeways --limit 100 -f csv > bikeways.csv
+sdgis query Bikeways --limit 100 -f geojson > bikeways.geojson
 
 # Fetch ALL features with automatic pagination
-sandag query-all Bikeways -f geojson > all_bikeways.geojson
+sdgis query-all Bikeways -f geojson > all_bikeways.geojson
 
 # Download pre-built exports
-sandag download Bikeways -f shapefile
+sdgis download Bikeways -f shapefile
 ```
 
 ## Commands
@@ -89,16 +95,16 @@ Typical agent workflow:
 
 ```bash
 # 1. Find relevant datasets
-sandag search "stormwater infrastructure" --json-output
+sdgis search "stormwater infrastructure" --json-output
 
 # 2. Understand a dataset's schema and sample data in one call
-sandag describe Hydrological_Basins
+sdgis describe Hydrological_Basins
 
 # 3. Count matching features before pulling all data
-sandag count Hydrological_Basins --where "AREA_SQMI > 10" --json-output
+sdgis count Hydrological_Basins --where "AREA_SQMI > 10" --json-output
 
 # 4. Pull the data
-sandag query Hydrological_Basins --where "AREA_SQMI > 10" -f geojson
+sdgis query Hydrological_Basins --where "AREA_SQMI > 10" -f geojson
 ```
 
 ## Dataset Categories
@@ -119,22 +125,22 @@ Land Use, Miscellaneous, Place, Transportation, Utilities, Zoning
 Filter by bounding box (WGS84 lon/lat):
 
 ```bash
-sandag query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 100 -f geojson
+sdgis query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 100 -f geojson
 ```
 
 ## Piping & Scripting
 
 ```bash
 # Count features in every transportation dataset
-sandag search transportation --json-output | \
+sdgis search transportation --json-output | \
   jq -r '.[].name' | \
   while read ds; do
     echo -n "$ds: "
-    sandag count "$ds" --json-output 2>/dev/null
+    sdgis count "$ds" --json-output 2>/dev/null
   done
 
 # Convert to GeoPackage with ogr2ogr
-sandag query-all Bikeways -f geojson | ogr2ogr -f "GPKG" bikeways.gpkg /vsistdin/
+sdgis query-all Bikeways -f geojson | ogr2ogr -f "GPKG" bikeways.gpkg /vsistdin/
 ```
 
 ## About the Data Warehouse
