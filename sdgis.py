@@ -53,7 +53,7 @@ EXPORT_FORMATS = {
     "metadata": ".pdf",
 }
 
-CACHE_DIR = Path.home() / ".cache" / "sandag-cli"
+CACHE_DIR = Path.home() / ".cache" / "sdgis-cli"
 CACHE_FILE = CACHE_DIR / "datasets.json"
 INDEX_FILE = CACHE_DIR / "index.db"
 CACHE_TTL = 86400  # 24 hours
@@ -64,7 +64,7 @@ EMBED_MODEL = "all-MiniLM-L6-v2"
 
 def get_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": "sandag-cli/1.0"})
+    s.headers.update({"User-Agent": "sdgis-cli/1.0"})
     s.timeout = 30
     return s
 
@@ -526,11 +526,11 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.0", prog_name="sandag")
+@click.version_option("1.0.0", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
-    🌊 sandag - San Diego Regional Data Warehouse CLI
+    🌊 sdgis - San Diego Regional Data Warehouse CLI
 
     Access 358+ GIS datasets from SANDAG/SanGIS covering San Diego County.
 
@@ -540,11 +540,11 @@ def cli(ctx):
 
     \b
     Quick start:
-      sandag search bikeways          # Find datasets
-      sandag info Bikeways             # Get dataset details & fields
-      sandag query Bikeways --limit 5  # Fetch features
-      sandag count Bikeways            # Count total features
-      sandag download Bikeways         # Download pre-built exports
+      sdgis search bikeways          # Find datasets
+      sdgis info Bikeways             # Get dataset details & fields
+      sdgis query Bikeways --limit 5  # Fetch features
+      sdgis count Bikeways            # Count total features
+      sdgis download Bikeways         # Download pre-built exports
     """
     ctx.ensure_object(dict)
     ctx.obj["session"] = get_session()
@@ -597,8 +597,8 @@ def build_index_cmd(ctx, force):
 
     \b
     Examples:
-      sandag index           # build or update index
-      sandag index --force   # force full rebuild
+      sdgis index           # build or update index
+      sdgis index --force   # force full rebuild
     """
     session = ctx.obj["session"]
     n = build_index(session, force=force)
@@ -618,7 +618,7 @@ def search(ctx, query, as_json, force_fts, force_fuzzy):
 
     \b
     Search priority (auto-detected):
-      1. Semantic vector search  (if 'sandag index' has been run)
+      1. Semantic vector search  (if 'sdgis index' has been run)
       2. FTS5 keyword search     (if index exists without embeddings)
       3. Fuzzy string match      (fallback, no index required)
     """
@@ -677,7 +677,7 @@ def search(ctx, query, as_json, force_fts, force_fuzzy):
     if len(matches) > 25:
         err_console.print(f"[dim]  ...and {len(matches) - 25} more results")
     if mode == "fuzzy" and not force_fuzzy:
-        err_console.print("[dim]  Tip: run [bold]sandag index[/] for semantic search")
+        err_console.print("[dim]  Tip: run [bold]sdgis index[/] for semantic search")
 
 
 # ── info ───────────────────────────────────────────────────────────────────────
@@ -793,10 +793,10 @@ def query(ctx, dataset, where, fields, limit, offset, order_by, geometry,
 
     \b
     Examples:
-      sandag query Bikeways --limit 5
-      sandag query Bikeways --where "RD_NAME='Coast Blvd'" --fields "RD_NAME,CLASS"
-      sandag query Affordable_Housing_Inventory -f geojson --geometry > housing.geojson
-      sandag query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 50
+      sdgis query Bikeways --limit 5
+      sdgis query Bikeways --where "RD_NAME='Coast Blvd'" --fields "RD_NAME,CLASS"
+      sdgis query Affordable_Housing_Inventory -f geojson --geometry > housing.geojson
+      sdgis query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 50
     """
     session = ctx.obj["session"]
 
@@ -873,8 +873,8 @@ def bbox(ctx, dataset, where, layer):
 
     \b
     Useful for piping into --bbox of another query:
-      BBOX=$(sandag bbox Dam_Inundation_DSOD --where "downstreamhazard='Extremely High'")
-      sandag query Community_Points --bbox "$BBOX" -f json
+      BBOX=$(sdgis bbox Dam_Inundation_DSOD --where "downstreamhazard='Extremely High'")
+      sdgis query Community_Points --bbox "$BBOX" -f json
 
     Output is plain text: xmin,ymin,xmax,ymax (WGS84)
     """
@@ -938,8 +938,8 @@ def query_all(ctx, dataset, where, fields, geometry, srid, layer, fmt, max_featu
 
     \b
     Automatically pages through the entire dataset:
-      sandag query-all Bikeways -f geojson > bikeways.geojson
-      sandag query-all ABC_Licenses -f csv > licenses.csv
+      sdgis query-all Bikeways -f geojson > bikeways.geojson
+      sdgis query-all ABC_Licenses -f csv > licenses.csv
     """
     session = ctx.obj["session"]
     page_size = 2000
@@ -1042,8 +1042,8 @@ def describe(ctx, dataset, layer, sample_count):
 
     \b
     Example:
-      sandag describe Bikeways
-      sandag describe ABC_Licenses -n 5
+      sdgis describe Bikeways
+      sdgis describe ABC_Licenses -n 5
     """
     session = ctx.obj["session"]
 
@@ -1107,9 +1107,9 @@ def download(ctx, dataset, fmt, output):
 
     \b
     These are static pre-generated files hosted by SANDAG:
-      sandag download Bikeways -f geojson
-      sandag download Bikeways -f shapefile -o bikeways.zip
-      sandag download Bikeways -f csv
+      sdgis download Bikeways -f geojson
+      sdgis download Bikeways -f shapefile -o bikeways.zip
+      sdgis download Bikeways -f csv
     """
     session = ctx.obj["session"]
     suffix = EXPORT_FORMATS[fmt]
@@ -1155,7 +1155,7 @@ def categories(as_json):
         table.add_row(str(i), cat)
 
     console.print(table)
-    console.print(f"\n[dim]Use [bold]sandag search <category>[/bold] to find datasets in a category.")
+    console.print(f"\n[dim]Use [bold]sdgis search <category>[/bold] to find datasets in a category.")
 
 
 # ── url ────────────────────────────────────────────────────────────────────────
@@ -1171,9 +1171,9 @@ def url(ctx, dataset, url_type):
 
     \b
     Examples:
-      sandag url Bikeways --type rest
-      sandag url Bikeways --type map
-      sandag url Bikeways --type geojson
+      sdgis url Bikeways --type rest
+      sdgis url Bikeways --type map
+      sdgis url Bikeways --type geojson
     """
     urls = {
         "rest": service_url(dataset),
@@ -1266,8 +1266,8 @@ def sql(ctx, dataset, where_clause, fields, limit, fmt):
 
     \b
     Examples:
-      sandag sql Bikeways "CLASS=1" --fields "RD_NAME,CLASS" --limit 20
-      sandag sql ABC_Licenses "LICENSE_TYPE='21'" -f csv
+      sdgis sql Bikeways "CLASS=1" --fields "RD_NAME,CLASS" --limit 20
+      sdgis sql ABC_Licenses "LICENSE_TYPE='21'" -f csv
     """
     ctx.invoke(query, dataset=dataset, where=where_clause, fields=fields,
                limit=limit, fmt=fmt)
@@ -1295,10 +1295,10 @@ def map_cmd(ctx, dataset, where, limit, layer, width, height, color, output, ope
 
     \b
     Examples:
-      sandag map Bikeways
-      sandag map Bikeways --where "bike_class=1" --color "#e63946"
-      sandag map Affordable_Housing_Inventory -o housing.png --open
-      sandag map Hydrological_Basins --limit 200 --width 1600 --height 1000
+      sdgis map Bikeways
+      sdgis map Bikeways --where "bike_class=1" --color "#e63946"
+      sdgis map Affordable_Housing_Inventory -o housing.png --open
+      sdgis map Hydrological_Basins --limit 200 --width 1600 --height 1000
     """
     try:
         from staticmap import StaticMap, CircleMarker, Line, Polygon
