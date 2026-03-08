@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="sdgis-cli",
-    version="1.0.3",
+    version="1.0.4",
     description="CLI for the San Diego Regional Data Warehouse (SANDAG/SanGIS)",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",

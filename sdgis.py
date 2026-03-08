@@ -530,7 +530,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.3", prog_name="sdgis")
+@click.version_option("1.0.4", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -559,10 +559,12 @@ def cli(ctx):
 
 @cli.command("list")
 @click.option("--refresh", is_flag=True, help="Force refresh the dataset cache")
-@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+@click.option("-f", "--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format (table or json)")
+@click.option("--json-output", "as_json", is_flag=True, hidden=True)
 @click.option("--category", "-c", default=None, help="Filter by category (e.g. Transportation, Fire)")
 @click.pass_context
-def list_datasets(ctx, refresh, as_json, category):
+def list_datasets(ctx, refresh, fmt, as_json, category):
+    as_json = as_json or fmt == "json"
     """List all available datasets.
 
     \b
@@ -635,11 +637,13 @@ def build_index_cmd(ctx, force):
 
 @cli.command()
 @click.argument("query")
-@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+@click.option("-f", "--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format (table or json)")
+@click.option("--json-output", "as_json", is_flag=True, hidden=True)
 @click.option("--fts", "force_fts", is_flag=True, help="Force FTS keyword search (skip semantic)")
 @click.option("--fuzzy", "force_fuzzy", is_flag=True, help="Force fuzzy string match (skip index)")
 @click.pass_context
-def search(ctx, query, as_json, force_fts, force_fuzzy):
+def search(ctx, query, fmt, as_json, force_fts, force_fuzzy):
+    as_json = as_json or fmt == "json"
     """Search datasets by name, tags, or description.
 
     \b
@@ -712,9 +716,11 @@ def search(ctx, query, as_json, force_fts, force_fuzzy):
 @cli.command()
 @click.argument("dataset")
 @click.option("--layer", default=0, help="Layer index (default: 0)")
-@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+@click.option("-f", "--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format (table or json)")
+@click.option("--json-output", "as_json", is_flag=True, hidden=True)
 @click.pass_context
-def info(ctx, dataset, layer, as_json):
+def info(ctx, dataset, layer, fmt, as_json):
+    as_json = as_json or fmt == "json"
     """Show detailed info and fields for a dataset.
 
     \b
@@ -787,9 +793,11 @@ def info(ctx, dataset, layer, as_json):
 @click.argument("dataset")
 @click.option("--where", default="1=1", help="SQL WHERE clause")
 @click.option("--layer", default=0, help="Layer index")
-@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+@click.option("-f", "--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format (table or json)")
+@click.option("--json-output", "as_json", is_flag=True, hidden=True)
 @click.pass_context
-def count(ctx, dataset, where, layer, as_json):
+def count(ctx, dataset, where, layer, fmt, as_json):
+    as_json = as_json or fmt == "json"
     """Count features in a dataset.
 
     \b
@@ -1037,9 +1045,11 @@ def query_all(ctx, dataset, where, fields, geometry, srid, layer, fmt, max_featu
 @cli.command()
 @click.argument("dataset")
 @click.option("--layer", default=0, help="Layer index")
-@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+@click.option("-f", "--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format (table or json)")
+@click.option("--json-output", "as_json", is_flag=True, hidden=True)
 @click.pass_context
-def fields(ctx, dataset, layer, as_json):
+def fields(ctx, dataset, layer, fmt, as_json):
+    as_json = as_json or fmt == "json"
     """List fields/columns for a dataset."""
     session = ctx.obj["session"]
 
@@ -1067,6 +1077,84 @@ def fields(ctx, dataset, layer, as_json):
         table.add_row(f["name"], f.get("alias", ""), ftype, nullable, domain_str)
 
     console.print(table)
+
+
+# ── values ─────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("dataset")
+@click.argument("field")
+@click.option("--where", default="1=1", help="SQL WHERE clause to filter before counting")
+@click.option("--limit", default=200, type=int, help="Max distinct values to return (default: 200)")
+@click.option("--layer", default=0, help="Layer index")
+@click.option("-f", "--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format (table or json)")
+@click.option("--json-output", "as_json", is_flag=True, hidden=True)
+@click.pass_context
+def values(ctx, dataset, field, where, limit, layer, fmt, as_json):
+    as_json = as_json or fmt == "json"
+    """List distinct values for a field — essential for building WHERE filters.
+
+    \b
+    Use this before querying to discover valid filter values for a field.
+    Without this, you're guessing at exact string values (and failing).
+
+    \b
+    Examples:
+      sdgis values Bikeways jurisdiction
+      sdgis values ABC_Licenses LICENSE_TYPE --json-output
+      sdgis values Roads_All funclass
+    """
+    session = ctx.obj["session"]
+    url = f"{feature_server_url(dataset, layer)}/query"
+    params = {
+        "where": where,
+        "outFields": field,
+        "returnGeometry": "false",
+        "returnDistinctValues": "true",
+        "orderByFields": field,
+        "resultRecordCount": limit,
+        "f": "json",
+    }
+
+    with err_console.status(f"Fetching distinct values for {dataset}.{field}..."):
+        try:
+            r = session.get(url, params=params, timeout=60)
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            handle_request_error(e, dataset)
+        data = r.json()
+
+    if "error" in data:
+        msg = data['error'].get('message', 'Unknown error')
+        if "does not exist" in msg and "Field name" in msg:
+            raise click.ClickException(
+                f"{msg}\n\n  Run 'sdgis fields {dataset}' to see all valid field names."
+            )
+        raise click.ClickException(f"API Error: {msg}")
+
+    features = data.get("features", [])
+    vals = [f.get("attributes", {}).get(field) for f in features]
+    vals = [v for v in vals if v is not None]
+
+    if as_json:
+        click.echo(json.dumps(vals, indent=2))
+        return
+
+    if not vals:
+        err_console.print(f"[yellow]No values found for {dataset}.{field}")
+        return
+
+    table = Table(
+        title=f"{dataset}.{field} — {len(vals)} distinct value{'s' if len(vals) != 1 else ''}",
+        box=box.ROUNDED,
+    )
+    table.add_column("Value", style="cyan")
+    for v in vals:
+        table.add_row(str(v))
+
+    console.print(table)
+    if len(vals) >= limit:
+        err_console.print(f"[dim]  Showing first {limit} values. Use --limit to increase.")
 
 
 # ── describe ───────────────────────────────────────────────────────────────────
@@ -1193,8 +1281,10 @@ def download(ctx, dataset, fmt, output):
 # ── categories ─────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
-def categories(as_json):
+@click.option("-f", "--format", "fmt", default="table", type=click.Choice(["table", "json"]), help="Output format (table or json)")
+@click.option("--json-output", "as_json", is_flag=True, hidden=True)
+def categories(fmt, as_json):
+    as_json = as_json or fmt == "json"
     """List dataset categories used in the Data Warehouse."""
     if as_json:
         click.echo(json.dumps(CATEGORIES))
@@ -1331,9 +1421,31 @@ def head(ctx, dataset, layer, fmt):
         console.print(table)
 
 
-# ── sql (convenience) ──────────────────────────────────────────────────────────
+# ── filter / sql (convenience) ─────────────────────────────────────────────────
 
-@cli.command()
+
+@cli.command("filter")
+@click.argument("dataset")
+@click.argument("where_clause")
+@click.option("--fields", default="*", help="Fields to return")
+@click.option("--limit", default=50, type=int, help="Max results")
+@click.option("-f", "--format", "fmt", default="table",
+              type=click.Choice(["table", "json", "geojson", "csv"]))
+@click.pass_context
+def filter_cmd(ctx, dataset, where_clause, fields, limit, fmt):
+    """Filter a dataset by a WHERE clause (shorthand for query --where).
+
+    \b
+    Examples:
+      sdgis filter Bikeways "bike_class=1" --fields "road_name,bike_class"
+      sdgis filter ABC_Licenses "LICENSE_TYPE='21'" -f csv
+      sdgis filter Bikeways "jurisdiction='Carlsbad'" --limit 20
+    """
+    ctx.invoke(query, dataset=dataset, where=where_clause, fields=fields,
+               limit=limit, fmt=fmt)
+
+
+@cli.command("sql", hidden=True)
 @click.argument("dataset")
 @click.argument("where_clause")
 @click.option("--fields", default="*", help="Fields to return")
@@ -1342,13 +1454,7 @@ def head(ctx, dataset, layer, fmt):
               type=click.Choice(["table", "json", "geojson", "csv"]))
 @click.pass_context
 def sql(ctx, dataset, where_clause, fields, limit, fmt):
-    """Run a WHERE clause query (shorthand).
-
-    \b
-    Examples:
-      sdgis sql Bikeways "CLASS=1" --fields "RD_NAME,CLASS" --limit 20
-      sdgis sql ABC_Licenses "LICENSE_TYPE='21'" -f csv
-    """
+    """Alias for filter (kept for backward compatibility)."""
     ctx.invoke(query, dataset=dataset, where=where_clause, fields=fields,
                limit=limit, fmt=fmt)
 
