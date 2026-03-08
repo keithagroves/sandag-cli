@@ -446,8 +446,10 @@ def build_index(session, force=False):
         has_embeddings = True
     except ImportError:
         has_embeddings = False
-        err_console.print("[yellow]sentence-transformers not installed — building FTS index only.")
-        err_console.print("[dim]  Run: pip install sentence-transformers numpy")
+        err_console.print("[yellow]sentence-transformers not installed — building FTS-only index (no semantic search).")
+        err_console.print("[dim]  For semantic search, run:")
+        err_console.print("[dim]    pipx inject sdgis-cli sentence-transformers numpy  (if using pipx)")
+        err_console.print("[dim]    pip install sdgis-cli[embed]                       (if using pip)")
 
     datasets = discover_datasets(session, force=force)
     conn = _open_index()
@@ -469,7 +471,7 @@ def build_index(session, force=False):
 
     if not has_embeddings:
         conn.close()
-        return len(datasets)
+        return len(datasets), False
 
     # Determine which datasets still need embeddings
     if force:
@@ -482,7 +484,7 @@ def build_index(session, force=False):
 
     if not to_embed:
         conn.close()
-        return len(datasets)
+        return len(datasets), True
 
     err_console.print(f"[dim]Loading embedding model '{EMBED_MODEL}'...")
     model = SentenceTransformer(EMBED_MODEL)
@@ -505,7 +507,7 @@ def build_index(session, force=False):
                      (ds["name"], blob))
     conn.commit()
     conn.close()
-    return len(datasets)
+    return len(datasets), True
 
 
 def _load_dataset_row(row):
@@ -576,7 +578,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.7", prog_name="sdgis")
+@click.version_option("1.0.8", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -660,13 +662,12 @@ def list_datasets(ctx, refresh, fmt, as_json, category):
 
     table = Table(title=title, box=box.ROUNDED, show_lines=False)
     table.add_column("#", style="dim", width=4)
-    table.add_column("Dataset Name", style="cyan bold", max_width=40)
-    table.add_column("Title", max_width=45)
-    table.add_column("Tags", style="dim", max_width=35)
+    table.add_column("Dataset Name", style="cyan bold", no_wrap=True)
+    table.add_column("Tags", style="dim", max_width=40)
 
     for i, ds in enumerate(datasets, 1):
         tags = ", ".join(ds.get("tags", [])[:3])
-        table.add_row(str(i), ds["name"], ds.get("title", ""), tags)
+        table.add_row(str(i), ds["name"], tags)
 
     console.print(table)
 
@@ -690,9 +691,13 @@ def build_index_cmd(ctx, force):
       sdgis index --force   # force full rebuild
     """
     session = ctx.obj["session"]
-    n = build_index(session, force=force)
-    console.print(f"[green]✓[/] Index built — [bold]{n}[/] datasets indexed at [dim]{INDEX_FILE}[/]")
-    console.print("[dim]  Use [bold]sdgis search <query>[/bold] for semantic search, e.g. sdgis search 'bike infrastructure'[/]")
+    n, has_embeddings = build_index(session, force=force)
+    mode = "semantic + FTS" if has_embeddings else "FTS-only"
+    console.print(f"[green]✓[/] Index built — [bold]{n}[/] datasets indexed ({mode}) at [dim]{INDEX_FILE}[/]")
+    if has_embeddings:
+        console.print("[dim]  Use [bold]sdgis search <query>[/bold] for semantic search, e.g. sdgis search 'bike infrastructure'[/]")
+    else:
+        console.print("[dim]  Keyword search enabled. For semantic search: [bold]pipx inject sdgis-cli sentence-transformers numpy[/]")
 
 
 # ── search ─────────────────────────────────────────────────────────────────────
@@ -975,7 +980,7 @@ def query(ctx, dataset, where, fields, limit, offset, order_by, geometry,
 
         console.print(table)
         if len(field_names) > max_cols:
-            err_console.print(f"[dim]  ({len(field_names) - max_cols} additional fields hidden — use -f json to see all)")
+            err_console.print(f"[dim]  ({len(field_names) - max_cols} additional fields hidden — use --fields to select columns or -f json to see all)")
         if data.get("exceededTransferLimit"):
             err_console.print(f"[yellow]  ⚠ More features available. Use --offset {offset + limit} to paginate.")
 
@@ -1038,10 +1043,10 @@ def bbox(ctx, dataset, where, layer):
 @click.option("-f", "--format", "fmt", default="geojson",
               type=click.Choice(["json", "geojson", "csv"]),
               help="Output format (default: geojson)")
-@click.option("--max-features", default=None, type=int,
-              help="Stop after N features (default: all)")
+@click.option("--limit", default=None, type=int, help="Stop after N features (default: all)")
+@click.option("--max-features", "limit", default=None, type=int, hidden=True)
 @click.pass_context
-def query_all(ctx, dataset, where, fields, geometry, srid, layer, fmt, max_features):
+def query_all(ctx, dataset, where, fields, geometry, srid, layer, fmt, limit):
     """Fetch ALL features with automatic pagination.
 
     \b
@@ -1063,8 +1068,8 @@ def query_all(ctx, dataset, where, fields, geometry, srid, layer, fmt, max_featu
 
         while True:
             remaining = None
-            if max_features:
-                remaining = max_features - len(all_features)
+            if limit:
+                remaining = limit - len(all_features)
                 if remaining <= 0:
                     break
                 page_size = min(2000, remaining)
@@ -1229,9 +1234,11 @@ def describe(ctx, dataset, layer, sample_count):
     Returns fields, geometry type, feature count, and sample rows as JSON.
 
     \b
-    Example:
+    Examples:
       sdgis describe Bikeways
       sdgis describe ABC_Licenses -n 5
+      sdgis describe Bikeways | less        # page through large output
+      sdgis describe Bikeways | jq '.fields[].name'
     """
     session = ctx.obj["session"]
 
@@ -1427,8 +1434,11 @@ def head(ctx, dataset, layer, fmt):
     session = ctx.obj["session"]
 
     with err_console.status(f"Previewing {dataset}..."):
-        lyr = get_layer_info(session, dataset, layer)
-        data = query_features(session, dataset, result_record_count=3, layer=layer)
+        try:
+            lyr = get_layer_info(session, dataset, layer)
+            data = query_features(session, dataset, result_record_count=3, layer=layer)
+        except requests.exceptions.RequestException as e:
+            handle_request_error(e, dataset)
 
     features = data.get("features", [])
 
@@ -1551,11 +1561,11 @@ def sql(ctx, dataset, where_clause, fields, limit, fmt):
 @click.option("--open", "open_after", is_flag=True, help="Open image after saving")
 @click.pass_context
 def map_cmd(ctx, dataset, where, limit, layer, width, height, color, output, open_after):
-    """Render dataset features as a PNG map image.
+    """Render dataset features as a PNG map image. (Optional — requires staticmap)
 
     \b
-    Uses OpenStreetMap tiles as basemap. Requires: pip install staticmap
-    Supports points, lines, and polygons.
+    Uses OpenStreetMap tiles as basemap. Supports points, lines, and polygons.
+    Install: pipx inject sdgis-cli staticmap  (or: pip install sdgis-cli[map])
 
     \b
     Examples:
@@ -1568,7 +1578,9 @@ def map_cmd(ctx, dataset, where, limit, layer, width, height, color, output, ope
         from staticmap import StaticMap, CircleMarker, Line, Polygon
     except ImportError:
         raise click.ClickException(
-            "staticmap is required: pip install staticmap"
+            "staticmap is required.\n\n"
+            "  pipx inject sdgis-cli staticmap   (if using pipx)\n"
+            "  pip install sdgis-cli[map]         (if using pip)"
         )
 
     session = ctx.obj["session"]
