@@ -1,0 +1,145 @@
+# sandag — San Diego Regional Data Warehouse CLI
+
+A command-line tool for exploring, querying, and downloading **360+ GIS datasets** from the [San Diego Regional Data Warehouse](https://geo.sandag.org) maintained by SANDAG and SanGIS.
+
+## Why use this?
+
+The SANDAG data warehouse is one of the most comprehensive public GIS repositories for San Diego County — but it's locked behind a web portal and ArcGIS REST APIs that are painful to work with directly. This CLI makes that data scriptable.
+
+**Use it if you want to:**
+
+- **Research or analyze San Diego** — parcels, zoning, census tracts, bike infrastructure, fire stations, hydrology, affordable housing, business licenses, broadband coverage, and much more
+- **Feed data to an AI agent** — all commands output clean JSON to stdout, status goes to stderr, making it easy to pipe into LLM workflows
+- **Script data pipelines** — pull live feature data with SQL-style filters, bounding boxes, and pagination; pipe directly to `jq`, `ogr2ogr`, or files
+- **Explore what's available** — semantic search across 360 datasets lets you find relevant data without knowing exact dataset names
+
+## Installation
+
+```bash
+pip install -e .
+
+# For semantic search (recommended):
+pip install sentence-transformers numpy
+```
+
+## Setup (first time)
+
+Build the local search index. Downloads the dataset catalog and computes embeddings (~22MB model, takes ~30s):
+
+```bash
+sandag index
+```
+
+## Quick Start
+
+```bash
+# Semantic search — find relevant datasets without knowing exact names
+sandag search "bike infrastructure"
+sandag search "water and flooding"
+sandag search "affordable housing near transit"
+
+# Understand a dataset before querying it (great for agents)
+sandag describe Bikeways
+
+# Count features (with optional filter)
+sandag count Bikeways
+sandag count ABC_Licenses --where "LICENSE_TYPE='21'"
+
+# Query features
+sandag query Bikeways --limit 5
+sandag query Bikeways --where "RD_NAME='Coast Blvd'" --fields "RD_NAME,CLASS"
+sandag query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 50
+
+# Output as JSON or CSV
+sandag query Bikeways --limit 100 -f json
+sandag query Bikeways --limit 100 -f csv > bikeways.csv
+sandag query Bikeways --limit 100 -f geojson > bikeways.geojson
+
+# Fetch ALL features with automatic pagination
+sandag query-all Bikeways -f geojson > all_bikeways.geojson
+
+# Download pre-built exports
+sandag download Bikeways -f shapefile
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `index` | Build local SQLite index with semantic embeddings |
+| `search <query>` | Semantic / FTS / fuzzy search across all datasets |
+| `describe <dataset>` | Schema + feature count + sample rows as JSON (agent-friendly) |
+| `list` | List all available datasets |
+| `info <dataset>` | Show schema, fields, metadata, and links |
+| `fields <dataset>` | List all fields with types and domains |
+| `head <dataset>` | Quick preview: 3 rows + schema summary |
+| `count <dataset>` | Count total features (supports WHERE clause) |
+| `query <dataset>` | Query features with filters, pagination, bounding box |
+| `query-all <dataset>` | Fetch all features with automatic pagination |
+| `sql <dataset> <where>` | Shorthand for WHERE clause queries |
+| `download <dataset>` | Download pre-built GeoJSON / CSV / Shapefile / FGDB |
+| `url <dataset>` | Generate REST, portal, or download URLs |
+| `categories` | List the 18 dataset categories |
+
+## For AI Agents
+
+Every command that returns data outputs **clean JSON to stdout** with no ANSI codes. Status messages go to stderr. This makes it easy to use with any LLM tool framework.
+
+Typical agent workflow:
+
+```bash
+# 1. Find relevant datasets
+sandag search "stormwater infrastructure" --json-output
+
+# 2. Understand a dataset's schema and sample data in one call
+sandag describe Hydrological_Basins
+
+# 3. Count matching features before pulling all data
+sandag count Hydrological_Basins --where "AREA_SQMI > 10" --json-output
+
+# 4. Pull the data
+sandag query Hydrological_Basins --where "AREA_SQMI > 10" -f geojson
+```
+
+## Dataset Categories
+
+Agriculture, Business, Census, Community, District, Ecology & Parks, Elevation,
+Fire, Health & Public Safety, Hydrology & Geology, Jurisdiction, Landbase,
+Land Use, Miscellaneous, Place, Transportation, Utilities, Zoning
+
+## Output Formats
+
+- **table** — Rich formatted terminal table (default, human-readable)
+- **json** — Raw ArcGIS JSON response
+- **geojson** — Standard GeoJSON FeatureCollection
+- **csv** — Comma-separated values (attributes only)
+
+## Spatial Queries
+
+Filter by bounding box (WGS84 lon/lat):
+
+```bash
+sandag query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 100 -f geojson
+```
+
+## Piping & Scripting
+
+```bash
+# Count features in every transportation dataset
+sandag search transportation --json-output | \
+  jq -r '.[].name' | \
+  while read ds; do
+    echo -n "$ds: "
+    sandag count "$ds" --json-output 2>/dev/null
+  done
+
+# Convert to GeoPackage with ogr2ogr
+sandag query-all Bikeways -f geojson | ogr2ogr -f "GPKG" bikeways.gpkg /vsistdin/
+```
+
+## Data Source
+
+All data comes from the **San Diego Regional Data Warehouse** operated by SANDAG (San Diego Association of Governments) and SanGIS.
+
+- Portal: https://geo.sandag.org
+- REST Services: https://geo.sandag.org/server/rest/services/Hosted
