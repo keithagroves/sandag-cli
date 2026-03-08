@@ -16,6 +16,7 @@ import io
 import re
 import time
 import sqlite3
+import difflib
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -235,6 +236,21 @@ def get_builtin_datasets():
     return [{"name": n, "title": n.replace("_", " "), "description": "", "tags": [], "id": "", "url": service_url(n)} for n in names]
 
 
+def suggest_dataset(name):
+    """Return close dataset name matches for 'did you mean?' hints."""
+    if CACHE_FILE.exists():
+        with open(CACHE_FILE) as f:
+            datasets = json.load(f)
+    else:
+        datasets = get_builtin_datasets()
+    names = [ds["name"] for ds in datasets]
+    matches = difflib.get_close_matches(name, names, n=3, cutoff=0.5)
+    if not matches:
+        name_lower = name.lower()
+        matches = [n for n in names if name_lower in n.lower() or n.lower() in name_lower][:3]
+    return matches
+
+
 def fuzzy_match(query, datasets):
     """Simple fuzzy search across name, title, tags, and description."""
     q = query.lower()
@@ -308,6 +324,11 @@ def query_features(session, dataset, where="1=1", out_fields="*", geometry=None,
             raise click.ClickException(
                 f"{msg}\n\n  Run 'sdgis fields {dataset}' to see all valid field names."
             )
+        if "service" in msg.lower() and "not found" in msg.lower():
+            suggestions = suggest_dataset(dataset)
+            hint = f"\n\n  Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            hint += f"\n  Run 'sdgis search {dataset}' to find datasets."
+            raise click.ClickException(f"Dataset not found: '{dataset}'.{hint}")
         raise click.ClickException(f"API Error {code}: {msg}")
     return data
 
@@ -319,9 +340,13 @@ def get_layer_info(session, dataset, layer=0):
     r.raise_for_status()
     data = r.json()
     if "error" in data:
-        raise click.ClickException(
-            f"API Error: {data['error'].get('message', 'Unknown')}"
-        )
+        msg = data['error'].get('message', 'Unknown')
+        if "service" in msg.lower() and "not found" in msg.lower():
+            suggestions = suggest_dataset(dataset)
+            hint = f"\n\n  Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+            hint += f"\n  Run 'sdgis search {dataset}' to find datasets."
+            raise click.ClickException(f"Dataset not found: '{dataset}'.{hint}")
+        raise click.ClickException(f"API Error: {msg}")
     return data
 
 
@@ -551,7 +576,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.5", prog_name="sdgis")
+@click.version_option("1.0.6", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -915,6 +940,8 @@ def query(ctx, dataset, where, fields, limit, offset, order_by, geometry,
     features = data.get("features", [])
     if not features:
         err_console.print("[yellow]No features returned.")
+        if where and where != "1=1":
+            err_console.print(f"[dim]  Hint: use [bold]sdgis values {dataset} <field>[/bold] to see valid values for a field.")
         return
 
     if fmt == "json":
@@ -928,22 +955,26 @@ def query(ctx, dataset, where, fields, limit, offset, order_by, geometry,
         all_attrs = features[0].get("attributes", {})
         field_names = list(all_attrs.keys())
 
+        term_width = console.size.width
+        col_width = 20
+        max_cols = max(2, min(len(field_names), (term_width - 4) // (col_width + 3)))
+
         table = Table(
             title=f"{dataset} — {len(features)} features",
             box=box.ROUNDED,
             show_lines=False,
         )
-        for fname in field_names[:15]:  # cap columns for readability
-            table.add_column(fname, max_width=30, overflow="ellipsis")
+        for fname in field_names[:max_cols]:
+            table.add_column(fname, max_width=col_width, overflow="ellipsis")
 
         for feat in features:
             attrs = feat.get("attributes", {})
-            row = [str(attrs.get(fn, "")) if attrs.get(fn) is not None else "" for fn in field_names[:15]]
+            row = [str(attrs.get(fn, "")) if attrs.get(fn) is not None else "" for fn in field_names[:max_cols]]
             table.add_row(*row)
 
         console.print(table)
-        if len(field_names) > 15:
-            err_console.print(f"[dim]  ({len(field_names) - 15} additional fields hidden — use -f json to see all)")
+        if len(field_names) > max_cols:
+            err_console.print(f"[dim]  ({len(field_names) - max_cols} additional fields hidden — use -f json to see all)")
         if data.get("exceededTransferLimit"):
             err_console.print(f"[yellow]  ⚠ More features available. Use --offset {offset + limit} to paginate.")
 
@@ -966,43 +997,32 @@ def bbox(ctx, dataset, where, layer):
     Output is plain text: xmin,ymin,xmax,ymax (WGS84)
     """
     session = ctx.obj["session"]
-    with err_console.status(f"Fetching geometry for {dataset}..."):
-        data = query_features(
-            session, dataset, where=where, out_fields="objectid",
-            return_geometry=True, out_sr=4326, result_record_count=2000, layer=layer,
-        )
+    url = f"{feature_server_url(dataset, layer)}/query"
+    params = {
+        "where": where,
+        "returnGeometry": "true",
+        "returnExtentOnly": "true",
+        "outSR": 4326,
+        "f": "json",
+    }
+    with err_console.status(f"Fetching extent for {dataset}..."):
+        try:
+            r = session.get(url, params=params, timeout=30)
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            handle_request_error(e, dataset)
+        data = r.json()
 
-    features = data.get("features", [])
-    if not features:
-        raise click.ClickException("No features returned — cannot compute bbox.")
+    if "error" in data:
+        msg = data["error"].get("message", "Unknown")
+        raise click.ClickException(f"API Error: {msg}")
 
-    all_x, all_y = [], []
-    for feat in features:
-        geom = feat.get("geometry") or {}
-        if "x" in geom and "y" in geom:
-            all_x.append(geom["x"])
-            all_y.append(geom["y"])
-        elif "rings" in geom:
-            for ring in geom["rings"]:
-                for pt in ring:
-                    all_x.append(pt[0])
-                    all_y.append(pt[1])
-        elif "paths" in geom:
-            for path in geom["paths"]:
-                for pt in path:
-                    all_x.append(pt[0])
-                    all_y.append(pt[1])
-        elif "points" in geom:
-            for pt in geom["points"]:
-                all_x.append(pt[0])
-                all_y.append(pt[1])
-
-    if not all_x:
-        raise click.ClickException("No coordinates found in features.")
-
-    result = f"{min(all_x)},{min(all_y)},{max(all_x)},{max(all_y)}"
-    err_console.print(f"[dim]bbox from {len(features)} features[/]")
-    click.echo(result)
+    ext = data.get("extent")
+    if ext and all(k in ext for k in ("xmin", "ymin", "xmax", "ymax")):
+        result = f"{ext['xmin']},{ext['ymin']},{ext['xmax']},{ext['ymax']}"
+        click.echo(result)
+    else:
+        raise click.ClickException("No extent returned — dataset may not support returnExtentOnly.")
 
 
 # ── query-all ──────────────────────────────────────────────────────────────────
