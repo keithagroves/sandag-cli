@@ -526,7 +526,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.1", prog_name="sdgis")
+@click.version_option("1.0.2", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -540,9 +540,10 @@ def cli(ctx):
 
     \b
     Quick start:
-      sdgis search bikeways          # Find datasets
-      sdgis info Bikeways             # Get dataset details & fields
-      sdgis query Bikeways --limit 5  # Fetch features
+      sdgis categories                # Browse the 18 dataset categories
+      sdgis list                      # See all 360+ available datasets
+      sdgis info Bikeways             # Explore a dataset's fields & metadata
+      sdgis query Bikeways --limit 5  # Fetch features (use exact name from list)
       sdgis count Bikeways            # Count total features
       sdgis download Bikeways         # Download pre-built exports
     """
@@ -654,6 +655,7 @@ def search(ctx, query, as_json, force_fts, force_fuzzy):
 
     if not matches:
         err_console.print(f"[yellow]No datasets matching '{query}'")
+        err_console.print("[dim]  Try: [bold]sdgis list[/] to browse all datasets, or [bold]sdgis categories[/] to explore by topic")
         return
 
     if as_json:
@@ -688,7 +690,17 @@ def search(ctx, query, as_json, force_fts, force_fuzzy):
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def info(ctx, dataset, layer, as_json):
-    """Show detailed info and fields for a dataset."""
+    """Show detailed info and fields for a dataset.
+
+    \b
+    Use this to explore a dataset before querying it — shows all field names,
+    types, geometry type, and feature count. Get dataset names from 'sdgis list'.
+
+    \b
+    Examples:
+      sdgis info Bikeways
+      sdgis info ABC_Licenses --json-output
+    """
     session = ctx.obj["session"]
 
     with err_console.status(f"Fetching info for {dataset}..."):
@@ -753,7 +765,13 @@ def info(ctx, dataset, layer, as_json):
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def count(ctx, dataset, where, layer, as_json):
-    """Count features in a dataset."""
+    """Count features in a dataset.
+
+    \b
+    Examples:
+      sdgis count Bikeways
+      sdgis count ABC_Licenses --where "LICENSE_TYPE='21'"
+    """
     session = ctx.obj["session"]
 
     with err_console.status(f"Counting features in {dataset}..."):
@@ -1089,7 +1107,17 @@ def describe(ctx, dataset, layer, sample_count):
               help="Output format")
 @click.pass_context
 def sample(ctx, dataset, n, layer, fmt):
-    """Show a quick sample of data from a dataset."""
+    """Show N sample records from a dataset (default: 5).
+
+    \b
+    Like 'sdgis head' but configurable count and no field type summary.
+    Use 'sdgis head' for a first look, 'sdgis sample' when you need more rows.
+
+    \b
+    Examples:
+      sdgis sample Bikeways
+      sdgis sample ABC_Licenses -n 10 -f json
+    """
     ctx.invoke(query, dataset=dataset, limit=n, layer=layer, fmt=fmt)
 
 
@@ -1198,7 +1226,17 @@ def url(ctx, dataset, url_type):
               help="Output format")
 @click.pass_context
 def head(ctx, dataset, layer, fmt):
-    """Show first 3 records plus field info (quick preview)."""
+    """Preview a dataset: first 3 records + all field names and types.
+
+    \b
+    Use this for a quick first look at an unfamiliar dataset.
+    For more records use 'sdgis sample -n 10', for full schema use 'sdgis info'.
+
+    \b
+    Examples:
+      sdgis head Bikeways
+      sdgis head ABC_Licenses -f json
+    """
     session = ctx.obj["session"]
 
     with err_console.status(f"Previewing {dataset}..."):
