@@ -44,8 +44,21 @@ sdgis search "bike infrastructure"
 sdgis search "water and flooding"
 sdgis search "affordable housing near transit"
 
+# Browse by category
+sdgis categories
+sdgis list --category Transportation
+
 # Understand a dataset before querying it (great for agents)
+sdgis head Bikeways
 sdgis describe Bikeways
+
+# Discover valid field values before filtering
+sdgis values Bikeways jurisdiction
+sdgis values ABC_Licenses LICENSE_TYPE
+
+# Filter with a WHERE clause
+sdgis filter Bikeways "jurisdiction='City of San Diego'"
+sdgis filter ABC_Licenses "LICENSE_TYPE='21'" -f csv
 
 # Count features (with optional filter)
 sdgis count Bikeways
@@ -74,18 +87,21 @@ sdgis download Bikeways -f shapefile
 |---------|-------------|
 | `index` | Build local SQLite index with semantic embeddings |
 | `search <query>` | Semantic / FTS / fuzzy search across all datasets |
+| `categories` | List the 18 dataset categories |
+| `list` | List all available datasets (supports `--category`) |
 | `describe <dataset>` | Schema + feature count + sample rows as JSON (agent-friendly) |
-| `list` | List all available datasets |
 | `info <dataset>` | Show schema, fields, metadata, and links |
 | `fields <dataset>` | List all fields with types and domains |
-| `head <dataset>` | Quick preview: 3 rows + schema summary |
-| `count <dataset>` | Count total features (supports WHERE clause) |
+| `head <dataset>` | Quick preview: schema summary + 3 sample rows |
+| `values <dataset> <field>` | List distinct values for a field (useful before filtering) |
+| `count <dataset>` | Count total features (supports `--where`) |
+| `filter <dataset> <where>` | Filter by SQL WHERE clause (shorthand for `query --where`) |
 | `query <dataset>` | Query features with filters, pagination, bounding box |
 | `query-all <dataset>` | Fetch all features with automatic pagination |
-| `sql <dataset> <where>` | Shorthand for WHERE clause queries |
+| `sample <dataset> [N]` | Show N sample records (default: 5) |
+| `bbox <dataset>` | Get the bounding box of a dataset or filtered subset |
 | `download <dataset>` | Download pre-built GeoJSON / CSV / Shapefile / FGDB |
 | `url <dataset>` | Generate REST, portal, or download URLs |
-| `categories` | List the 18 dataset categories |
 
 ## For AI Agents
 
@@ -95,15 +111,18 @@ Typical agent workflow:
 
 ```bash
 # 1. Find relevant datasets
-sdgis search "stormwater infrastructure" --json-output
+sdgis search "stormwater infrastructure" -f json
 
 # 2. Understand a dataset's schema and sample data in one call
 sdgis describe Hydrological_Basins
 
-# 3. Count matching features before pulling all data
-sdgis count Hydrological_Basins --where "AREA_SQMI > 10" --json-output
+# 3. Discover valid field values before filtering
+sdgis values Hydrological_Basins WATERSHED_NAME
 
-# 4. Pull the data
+# 4. Count matching features before pulling all data
+sdgis count Hydrological_Basins --where "AREA_SQMI > 10" -f json
+
+# 5. Pull the data
 sdgis query Hydrological_Basins --where "AREA_SQMI > 10" -f geojson
 ```
 
@@ -132,11 +151,11 @@ sdgis query ABC_Licenses --bbox "-117.2,32.7,-117.1,32.8" --limit 100 -f geojson
 
 ```bash
 # Count features in every transportation dataset
-sdgis search transportation --json-output | \
+sdgis search transportation -f json | \
   jq -r '.[].name' | \
   while read ds; do
     echo -n "$ds: "
-    sdgis count "$ds" --json-output 2>/dev/null
+    sdgis count "$ds" -f json 2>/dev/null
   done
 
 # Convert to GeoPackage with ogr2ogr
