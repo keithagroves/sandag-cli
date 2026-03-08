@@ -281,9 +281,13 @@ def query_features(session, dataset, where="1=1", out_fields="*", geometry=None,
     data = r.json()
 
     if "error" in data:
-        raise click.ClickException(
-            f"API Error {data['error'].get('code', '?')}: {data['error'].get('message', 'Unknown error')}"
-        )
+        msg = data['error'].get('message', 'Unknown error')
+        code = data['error'].get('code', '?')
+        if "does not exist" in msg and "Field name" in msg:
+            raise click.ClickException(
+                f"{msg}\n\n  Run 'sdgis fields {dataset}' to see all valid field names."
+            )
+        raise click.ClickException(f"API Error {code}: {msg}")
     return data
 
 
@@ -526,7 +530,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.2", prog_name="sdgis")
+@click.version_option("1.0.3", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -556,21 +560,42 @@ def cli(ctx):
 @cli.command("list")
 @click.option("--refresh", is_flag=True, help="Force refresh the dataset cache")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--category", "-c", default=None, help="Filter by category (e.g. Transportation, Fire)")
 @click.pass_context
-def list_datasets(ctx, refresh, as_json):
-    """List all available datasets."""
+def list_datasets(ctx, refresh, as_json, category):
+    """List all available datasets.
+
+    \b
+    Examples:
+      sdgis list
+      sdgis list --category Transportation
+      sdgis list -c Fire
+    """
     session = ctx.obj["session"]
     datasets = discover_datasets(session, force=refresh)
+
+    if category:
+        cat_lower = category.lower()
+        datasets = [
+            ds for ds in datasets
+            if any(cat_lower in t.lower() for t in ds.get("tags", []))
+            or cat_lower in ds.get("name", "").lower()
+            or cat_lower in ds.get("description", "").lower()
+        ]
+        if not datasets:
+            err_console.print(f"[yellow]No datasets found matching category '{category}'")
+            err_console.print("[dim]  Run [bold]sdgis categories[/] to see category names")
+            return
 
     if as_json:
         click.echo(json.dumps(datasets, indent=2))
         return
 
-    table = Table(
-        title=f"SANDAG Data Warehouse — {len(datasets)} Datasets",
-        box=box.ROUNDED,
-        show_lines=False,
-    )
+    title = f"SANDAG Data Warehouse — {len(datasets)} Datasets"
+    if category:
+        title += f" (category: {category})"
+
+    table = Table(title=title, box=box.ROUNDED, show_lines=False)
     table.add_column("#", style="dim", width=4)
     table.add_column("Dataset Name", style="cyan bold", max_width=40)
     table.add_column("Title", max_width=45)
@@ -1265,7 +1290,8 @@ def head(ctx, dataset, layer, fmt):
 
     # Table output
     geom_type = lyr.get("geometryType", "?").replace("esriGeometry", "")
-    num_fields = len(lyr.get("fields", []))
+    all_fields = lyr.get("fields", [])
+    num_fields = len(all_fields)
 
     console.print(Panel(
         f"[bold]{lyr.get('name', dataset)}[/]\n"
@@ -1274,17 +1300,33 @@ def head(ctx, dataset, layer, fmt):
         border_style="blue",
     ))
 
+    # Fields table (always vertical — readable even for 60+ field datasets)
+    field_table = Table(box=box.SIMPLE, show_header=True, show_lines=False)
+    field_table.add_column("Field", style="cyan", min_width=20)
+    field_table.add_column("Type", style="dim", min_width=12)
+    field_table.add_column("Alias", style="dim")
+    for f in all_fields:
+        ftype = f.get("type", "").replace("esriFieldType", "")
+        alias = f.get("alias", "")
+        fname = f.get("name", "")
+        field_table.add_row(fname, ftype, alias if alias != fname else "")
+    console.print(field_table)
+
     if features:
+        # Cap sample data table at 6 columns to keep it readable
         attrs = features[0].get("attributes", {})
         field_names = list(attrs.keys())
+        show_fields = field_names[:6]
+        if len(field_names) > 6:
+            console.print(f"[dim]Sample data (first 6 of {len(field_names)} fields):[/]")
 
         table = Table(box=box.SIMPLE, show_lines=False)
-        for fn in field_names[:12]:
-            table.add_column(fn, max_width=25, overflow="ellipsis")
+        for fn in show_fields:
+            table.add_column(fn, max_width=28, overflow="ellipsis")
 
         for feat in features:
             a = feat.get("attributes", {})
-            table.add_row(*[str(a.get(fn, ""))[:25] if a.get(fn) is not None else "" for fn in field_names[:12]])
+            table.add_row(*[str(a.get(fn, ""))[:28] if a.get(fn) is not None else "" for fn in show_fields])
 
         console.print(table)
 
