@@ -576,7 +576,7 @@ def fts_search(query, top_k=25):
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 @click.group()
-@click.version_option("1.0.6", prog_name="sdgis")
+@click.version_option("1.0.7", prog_name="sdgis")
 @click.pass_context
 def cli(ctx):
     """
@@ -692,6 +692,7 @@ def build_index_cmd(ctx, force):
     session = ctx.obj["session"]
     n = build_index(session, force=force)
     console.print(f"[green]✓[/] Index built — [bold]{n}[/] datasets indexed at [dim]{INDEX_FILE}[/]")
+    console.print("[dim]  Use [bold]sdgis search <query>[/bold] for semantic search, e.g. sdgis search 'bike infrastructure'[/]")
 
 
 # ── search ─────────────────────────────────────────────────────────────────────
@@ -1269,13 +1270,14 @@ def describe(ctx, dataset, layer, sample_count):
 
 @cli.command()
 @click.argument("dataset")
-@click.option("-n", "--count", "n", default=5, help="Number of sample records")
+@click.argument("n_arg", default=None, required=False, type=int, metavar="N")
+@click.option("-n", "--count", "n_opt", default=5, help="Number of sample records")
 @click.option("--layer", default=0, help="Layer index")
 @click.option("-f", "--format", "fmt", default="table",
               type=click.Choice(["table", "json", "geojson", "csv"]),
               help="Output format")
 @click.pass_context
-def sample(ctx, dataset, n, layer, fmt):
+def sample(ctx, dataset, n_arg, n_opt, layer, fmt):
     """Show N sample records from a dataset (default: 5).
 
     \b
@@ -1285,8 +1287,10 @@ def sample(ctx, dataset, n, layer, fmt):
     \b
     Examples:
       sdgis sample Bikeways
+      sdgis sample Bikeways 10
       sdgis sample ABC_Licenses -n 10 -f json
     """
+    n = n_arg if n_arg is not None else n_opt
     ctx.invoke(query, dataset=dataset, limit=n, layer=layer, fmt=fmt)
 
 
@@ -1303,10 +1307,22 @@ def download(ctx, dataset, fmt, output):
     """Download pre-built dataset exports from SANDAG.
 
     \b
-    These are static pre-generated files hosted by SANDAG:
-      sdgis download Bikeways -f geojson
+    Available formats (-f):
+      geojson    — GeoJSON file (.geojson)
+      csv        — CSV attributes only (.csv)
+      shapefile  — Zipped Shapefile (.zip)
+      filegdb    — File Geodatabase (.gdb.zip)
+      metadata   — Metadata XML (.xml)
+
+    \b
+    Examples:
+      sdgis download Bikeways
       sdgis download Bikeways -f shapefile -o bikeways.zip
       sdgis download Bikeways -f csv
+
+    \b
+    Note: Not all datasets have all formats available.
+    Use 'sdgis query-all' for live data export instead.
     """
     session = ctx.obj["session"]
     suffix = EXPORT_FORMATS[fmt]
@@ -1496,6 +1512,12 @@ def filter_cmd(ctx, dataset, where_clause, fields, limit, fmt):
       sdgis filter Bikeways "bike_class=1" --fields "road_name,bike_class"
       sdgis filter ABC_Licenses "LICENSE_TYPE='21'" -f csv
       sdgis filter Bikeways "jurisdiction='Carlsbad'" --limit 20
+
+    \b
+    Shell quoting tip: wrap the WHERE clause in double quotes so the shell
+    passes single quotes inside unchanged:
+      sdgis filter Bikeways "jurisdiction='City of San Diego'"
+    Use 'sdgis values <dataset> <field>' to discover valid field values.
     """
     ctx.invoke(query, dataset=dataset, where=where_clause, fields=fields,
                limit=limit, fmt=fmt)
